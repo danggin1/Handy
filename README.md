@@ -1,4 +1,4 @@
-# Handy — KSL Motion Learning (Web)
+# Handy! — KSL Motion Learning (Web)
 
 실시간 카메라 입력과 MediaPipe를 활용해 수어를 학습 할 수 있도록 만든 웹 데모(9개 단어)입니다.
 
