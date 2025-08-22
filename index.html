@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Handy · 모션 인식 수화 학습 서비스</title>
+  <title>Handy! · 모션 인식 수화 학습 서비스</title>
   
   <!-- ===================== Safe stub & MediaPipe base ===================== -->
   <script>
@@ -65,6 +65,8 @@
 
     .slot{ position:relative; aspect-ratio:16/9; background:#0001; border:1px solid var(--border); border-radius:12px; overflow:hidden }
     .slot > video, .slot > canvas{ position:absolute; inset:0; width:100%; height:100% }
+.slot > video{ z-index:1 }
+.slot > canvas{ z-index:2; pointer-events:none !important }
 .slot > canvas{ pointer-events:none !important; }
 .slot > canvas{ pointer-events:none !important }
     /*__overlay_zindex__*/
@@ -91,7 +93,7 @@
   <!-- ===================== Header ===================== -->
   <header>
     <div style="max-width:1200px;margin:0 auto;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
-      <div class="brand">Handy</div>
+      <div class="brand">Handy!</div>
       <nav role="tablist" aria-label="주 탭" class="tabs">
         <button class="tab-btn" role="tab" id="tabbtn-learn" aria-controls="panel-learn" aria-selected="true" data-tab="learn">학습</button>
         <button class="tab-btn" role="tab" id="tabbtn-lessons" aria-controls="panel-lessons" aria-selected="false" data-tab="lessons">레슨</button>
@@ -489,10 +491,15 @@ r = {
 
   // ===== Admin: main processing =====
   let __processingVideos=false;
-  async function processUploadedVideos(){ if(__processingVideos){ log('[중복방지] 이미 처리 중입니다.'); return; } __processingVideos=true; try{ const files=Array.from(adminVideo.files||[]); if(!files.length){ showAlert('영상을 선택하세요','warn'); log('입력 파일 0개 — 중단'); return; } log(`처리 시작: 선택된 파일 ${files.length}개`); let hol; try{ log('Holistic 인스턴스 생성 시도'); hol=await ensureHolAdmin(); log('Holistic 준비 완료'); }catch(e){ showAlert(e.message,'err'); log('Holistic 준비 실패: '+(e?.message||e)); return; } adminLog.textContent=''; if(chkOverlay) chkOverlay.checked=true; let i=0; for(const f of files){ i++; let label=deriveLabel(f.name); log(`[${i}/${files.length}] ▶ ${f.name} → label="${label}"`);
+  async function processUploadedVideos(){ if(__processingVideos){ log('[중복방지] 이미 처리 중입니다.'); return; } __processingVideos=true; try{ const files=Array.from(adminVideo.files||[]); if(!files.length){ showAlert('영상을 선택하세요','warn'); log('입력 파일 0개 — 중단'); return; } log(`처리 시작: 선택된 파일 ${files.length}개`); let hol; try{ log('Holistic 인스턴스 생성 시도'); hol=await ensureHolAdmin(); log('Holistic 준비 완료'); }catch(e){ showAlert(e.message,'err'); log('Holistic 준비 실패: '+(e?.message||e)); return; } adminLog.textContent=''; if(chkOverlay) chkOverlay.checked=true; let i=0; for(const f of files){ i++; let label=deriveLabel(f.name);
+// macOS Unicode normalization & zero-width cleanup
+const _N=(s)=> (s&&s.normalize)? s.normalize('NFC') : (s||'');
+const _Z=(s)=> _N(String(s)).replace(/[\u200B\u200C\u200D\uFEFF]/g,'').trim();
+const rawName=_Z(f.name);
+label=_Z(label); log(`[${i}/${files.length}] ▶ ${rawName} → label="${label}"`);
           // ── 사전용 처리: DB에 원본 영상 저장 + 추출은 접미사 제거한 레이블로 계속 ──
           try{
-            const mDict = label && label.match(/(.+)_사전용$/);
+            const mDict = label && label.match(/(.+?)_사전용(?:\s*\(\d+\))?$/u);
             if(mDict){
               const base = (mDict[1]||'').trim();
               try{ await dictPut(base, f); log(`사전용 저장 완료: "${base}"`); }catch(e){ log(`[사전용 저장 실패] ${e&&e.message?e.message:e}`); }
@@ -500,8 +507,8 @@ r = {
             }
           }catch(e){ log(`[사전용 처리 오류] ${e&&e.message?e.message:e}`); }
           hol.__firstPass = (i===1);  // mark first sample for forced accept
-          const item=await processOne(f,label,hol);           hol.__FirstPassCleared = true; hol.__firstPass = false;
-if(item){ log(`저장완료: ${label} frames=${item.frames}, dim=${item.dim}`);} else { log(`스킵: ${label} — 유효 프레임 없음`);} } showAlert(`${files.length}개 처리 완료`,'ok'); } finally { __processingVideos=false; } }
+          const item=await processOne(f,label,hol);
+          hol.__firstPass = false; if(item){ log(`저장완료: ${label} frames=${item.frames}, dim=${item.dim}`);} else { log(`스킵: ${label} — 유효 프레임 없음`);} } showAlert(`${files.length}개 처리 완료`,'ok'); } finally { __processingVideos=false; } }
 
   // ===== Robust processOne (r7.2 consolidated) =====
   if(!window.__processOneVersion || window.__processOneVersion < 72){ window.__processOneVersion = 72; }
@@ -590,7 +597,7 @@ function processOne(file,label,hol){
       try{ clearInterval(ivPumpId);}catch{}
     };
 
-    const finOnce = () => {
+    const finOnce = async () => {
       if (stopped) return;
       stopped = true;
       clearTimers();
@@ -600,16 +607,7 @@ function processOne(file,label,hol){
 
       // quality check using collected per-frame arrays
       const dur = isFinite(adminPreview.duration) ? adminPreview.duration : 0;
-      const chk = strictCheck(stats, times, validFlags, handAny, dur);
-      if (!chk.pass) {
-        if (hol && hol.__firstPass) {
-          log('[첫 영상 예외] 품질 기준 미달이지만 첫 영상은 강제로 저장합니다.');
-        } else {
-          log(`[필터: 스킵] ${chk.reasons.join(' / ')}`);
-          try { resolve(null); } catch {}
-          return;
-        }
-      }
+      const chk = strictCheck(stats, times, validFlags, handAny, dur); if (!chk.pass) { if (hol && hol.__firstPass) { log('[첫 영상 예외] 품질 기준 미달 → 키프레임 구제 스캔 실행'); try { await rescueIfLowFrames(true); } catch(e){} await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))); } else { log(`[필터: 스킵] ${chk.reasons.join(' / ')}`); try { resolve(null); } catch {} return; } }
 
       const seq = downsample(feats, 30);
       if (!seq.length) { try{ resolve(null); }catch{} return; }
@@ -638,9 +636,9 @@ function processOne(file,label,hol){
     };
 
     // Low-frame rescue with guarded seek and timeout
-    const rescueIfLowFrames = async () => {
+    const rescueIfLowFrames = async (force=false) => {
       const dur = isFinite(adminPreview.duration) ? adminPreview.duration : 0;
-      if (stats.f >= 20 || !dur) return false;
+      if (!force && (stats.f >= 20 || !dur)) return false;
 
       log('저프레임 감지 — 프레임 스텝 재수집 시작');
       try { adminPreview.pause(); } catch {}
@@ -919,6 +917,56 @@ function bindUI(){
       }catch{}
     }, true);
   }catch{}
+
+  // JSON import handler (merge + dedupe)
+  try{
+    const inp = document.getElementById('importJson');
+    if(inp){
+      inp.addEventListener('change', async ()=>{
+        try{
+          const f = inp.files && inp.files[0];
+          if(!f){ showAlert('가져올 .json 파일을 선택하세요','warn'); return; }
+          const text = await f.text();
+          let raw=null; try{ raw=JSON.parse(text); }catch(e){ showAlert('JSON 파싱 실패','err'); log('[가져오기 실패] '+(e?.message||e)); return; }
+          let arr = Array.isArray(raw)? raw : (
+            Array.isArray(raw.dataset)? raw.dataset :
+            Array.isArray(raw.items)? raw.items :
+            Array.isArray(raw.ds)? raw.ds :
+            (raw && Array.isArray(raw.data)? raw.data : [])
+          );
+          if(!arr.length){ showAlert('유효한 데이터셋이 아닙니다','err'); return; }
+          const now = Date.now(); const norm=[];
+          for(const it of arr){
+            if(!it) continue;
+            const label = String(it.label || it.name || it.word || it.title || '').trim();
+            let data = it.data || it.seq || it.sequence || it.samples;
+            if(!Array.isArray(data)) continue;
+            data = data.filter(fr=>Array.isArray(fr)).map(fr=>fr.map(x=>+x||0));
+            if(!data.length) continue;
+            const dim = it.dim || (data[0]?.length||0);
+            const frames = it.frames || data.length;
+            const id = it.id || (crypto?.randomUUID? crypto.randomUUID() : ('imp_'+Math.random().toString(36).slice(2)));
+            const added = it.added || now;
+            norm.push({ id, label: label || '(무명)', frames, dim, data, added });
+          }
+          if(!norm.length){ showAlert('가져올 항목이 없습니다','warn'); return; }
+          const ex = loadDS();
+          const ids = new Set(ex.map(x=>x.id));
+          const keys = new Set(ex.map(x=>x.label+'|'+x.frames+'|'+x.dim));
+          let addedCnt=0;
+          for(const it of norm){
+            const key = it.label+'|'+it.frames+'|'+it.dim;
+            if(ids.has(it.id) || keys.has(key)) continue;
+            ex.push(it); ids.add(it.id); keys.add(key); addedCnt++;
+          }
+          saveDS(ex);
+          showAlert(`가져오기 완료: ${addedCnt}개 추가`,'ok');
+          try{ inp.value=''; }catch{}
+        }catch(e){ showAlert('가져오기 중 오류','err'); log('[가져오기 오류] '+(e?.message||e)); }
+      });
+    }
+  }catch(e){ console.warn('import bind err', e); }
+
 }
 
 
