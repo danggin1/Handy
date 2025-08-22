@@ -499,7 +499,9 @@ r = {
               label = base; // 접미사 제거 후 추출 진행
             }
           }catch(e){ log(`[사전용 처리 오류] ${e&&e.message?e.message:e}`); }
-          const item=await processOne(f,label,hol); if(item){ log(`저장완료: ${label} frames=${item.frames}, dim=${item.dim}`);} else { log(`스킵: ${label} — 유효 프레임 없음`);} } showAlert(`${files.length}개 처리 완료`,'ok'); } finally { __processingVideos=false; } }
+          hol.__firstPass = (i===1);  // mark first sample for forced accept
+          const item=await processOne(f,label,hol);           hol.__FirstPassCleared = true; hol.__firstPass = false;
+if(item){ log(`저장완료: ${label} frames=${item.frames}, dim=${item.dim}`);} else { log(`스킵: ${label} — 유효 프레임 없음`);} } showAlert(`${files.length}개 처리 완료`,'ok'); } finally { __processingVideos=false; } }
 
   // ===== Robust processOne (r7.2 consolidated) =====
   if(!window.__processOneVersion || window.__processOneVersion < 72){ window.__processOneVersion = 72; }
@@ -600,9 +602,13 @@ function processOne(file,label,hol){
       const dur = isFinite(adminPreview.duration) ? adminPreview.duration : 0;
       const chk = strictCheck(stats, times, validFlags, handAny, dur);
       if (!chk.pass) {
-        log(`[필터: 스킵] ${chk.reasons.join(' / ')}`);
-        try { resolve(null); } catch {}
-        return;
+        if (hol && hol.__firstPass) {
+          log('[첫 영상 예외] 품질 기준 미달이지만 첫 영상은 강제로 저장합니다.');
+        } else {
+          log(`[필터: 스킵] ${chk.reasons.join(' / ')}`);
+          try { resolve(null); } catch {}
+          return;
+        }
       }
 
       const seq = downsample(feats, 30);
